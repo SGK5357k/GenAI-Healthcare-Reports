@@ -1,0 +1,6 @@
+Patient_ID,Age,Gender,Fasting_Glucose,Postprandial_Glucose,HbA1c,Insulin
+SYN-61342,65,Male,103,121,6.1,137
+SYN-88493,68,Female,198,176,9.7,174
+SYN-17913,25,Male,72,132,11.7,134
+SYN-49017,66,Male,97,213,6.2,88
+SYN-75995,37,Male,199,149,10.6,85

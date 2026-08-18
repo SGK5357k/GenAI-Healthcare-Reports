@@ -1,0 +1,8 @@
+streamlit
+pandas
+python-dotenv
+groq
+reportlab
+PyMuPDF
+Pillow
+pytesseract
