@@ -1,7 +1,38 @@
-.env
-.venv/
-venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Streamlit secrets
 .streamlit/secrets.toml
-generated_reports/
+
+# Generated reports
+generated_reports/*
+!generated_reports/.gitkeep
+
+# Generated PDF reports
+reports/*.pdf
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/

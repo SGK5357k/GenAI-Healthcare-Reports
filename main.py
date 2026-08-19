@@ -29,6 +29,12 @@ from modules.real_report_processor import (
     extract_medical_values
 )
 
+from modules.ml_models import (
+    predict_diabetes,
+    predict_heart_disease,
+    prediction_to_text
+)
+
 
 # ============================================================
 # PAGE CONFIGURATION
@@ -47,30 +53,23 @@ st.set_page_config(
 # ============================================================
 
 defaults = {
-
     "patients": None,
-
     "selected_patient": None,
-
     "generated_report": None,
-
     "pdf_file": None,
-
     "report_type": "Diabetes",
-
     "input_mode": None,
 
     "real_report_text": None,
-
     "real_report_method": None,
-
     "real_report_parameters": [],
-
     "real_report_values": None,
-
     "verified_real_data": None,
+    "real_report_name": None,
 
-    "real_report_name": None
+    # Disease prediction
+    "prediction_result": None,
+    "prediction_text": None
 }
 
 
@@ -109,10 +108,6 @@ st.markdown(
         margin-bottom: 10px;
     }
 
-    .small-text {
-        font-size: 13px;
-    }
-
     </style>
     """,
     unsafe_allow_html=True
@@ -148,14 +143,17 @@ st.warning(
 
     This application is an educational/research prototype.
 
-    • Synthetic data can be used freely for demonstration.
+    • Synthetic data can be used for demonstration.
 
     • For real reports, only upload documents you are
       authorized to process.
 
     • Avoid uploading unnecessary personally identifiable
       information.
-      
+
+    • Disease predictions are model probability estimates,
+      not medical diagnoses.
+
     • AI-generated content must not be used as a substitute
       for professional medical diagnosis or treatment.
     """
@@ -170,22 +168,21 @@ with st.sidebar:
 
     st.header("⚙️ Configuration")
 
+    report_types = [
+        "Diabetes",
+        "CBC",
+        "Lipid",
+        "Kidney"
+    ]
+
+    current_index = report_types.index(
+        st.session_state.report_type
+    )
+
     report_type = st.selectbox(
         "Medical Report Type",
-        [
-            "Diabetes",
-            "CBC",
-            "Lipid",
-            "Kidney"
-        ],
-        index=[
-            "Diabetes",
-            "CBC",
-            "Lipid",
-            "Kidney"
-        ].index(
-            st.session_state.report_type
-        )
+        report_types,
+        index=current_index
     )
 
     st.session_state.report_type = report_type
@@ -226,12 +223,13 @@ with st.sidebar:
 # TABS
 # ============================================================
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
     [
         "👤 Synthetic Patients",
         "📄 Real Medical Report",
         "🤖 GenAI Report",
         "📑 PDF Report",
+        "🩺 Disease Prediction",
         "ℹ️ About"
     ]
 )
@@ -253,7 +251,7 @@ with tab1:
 
     st.write(
         """
-        Generate completely synthetic patient records
+        Generate completely fictional patient records
         for testing and demonstration.
         """
     )
@@ -277,9 +275,11 @@ with tab1:
 
             try:
 
+                # Current synthetic_data.py accepts
+                # number_of_patients rather than n_patients.
                 patients = generate_synthetic_patients(
                     report_type=report_type,
-                    n_patients=number_of_patients
+                    number_of_patients=number_of_patients
                 )
 
                 if isinstance(
@@ -305,51 +305,11 @@ with tab1:
 
                 st.session_state.pdf_file = None
 
+                st.session_state.prediction_result = None
+
                 st.success(
                     "Synthetic patients generated successfully."
                 )
-
-            except TypeError:
-
-                try:
-
-                    patients = generate_synthetic_patients(
-                        report_type,
-                        number_of_patients
-                    )
-
-                    if isinstance(
-                        patients,
-                        pd.DataFrame
-                    ):
-
-                        df = patients
-
-                    else:
-
-                        df = pd.DataFrame(
-                            patients
-                        )
-
-                    st.session_state.patients = df
-
-                    st.session_state.input_mode = (
-                        "synthetic"
-                    )
-
-                    st.success(
-                        "Synthetic patients generated successfully."
-                    )
-
-                except Exception as e:
-
-                    st.error(
-                        f"Generation failed: {e}"
-                    )
-
-                    st.code(
-                        traceback.format_exc()
-                    )
 
             except Exception as e:
 
@@ -357,14 +317,14 @@ with tab1:
                     f"Generation failed: {e}"
                 )
 
-                st.code(
-                    traceback.format_exc()
-                )
+                with st.expander(
+                    "Technical Details"
+                ):
 
+                    st.code(
+                        traceback.format_exc()
+                    )
 
-    # --------------------------------------------------------
-    # DISPLAY PATIENTS
-    # --------------------------------------------------------
 
     if st.session_state.patients is not None:
 
@@ -405,7 +365,7 @@ with tab2:
         **Processing flow**
 
         Upload → Extract Text → Detect Parameters →
-        Extract Values → Verify → Generate AI Report
+        Extract Values → Verify → AI Report
         """
     )
 
@@ -505,6 +465,12 @@ with tab2:
 
                     st.session_state.pdf_file = None
 
+                    st.session_state.real_report_values = None
+
+                    st.session_state.verified_real_data = None
+
+                    st.session_state.prediction_result = None
+
                     st.success(
                         "Report extracted successfully."
                     )
@@ -547,10 +513,6 @@ with tab2:
             )
         )
 
-        # ----------------------------------------------------
-        # Editable extracted text
-        # ----------------------------------------------------
-
         edited_text = st.text_area(
             "Review / Correct Extracted Text",
             value=st.session_state.real_report_text,
@@ -571,6 +533,10 @@ with tab2:
                     edited_text
                 )
             )
+
+            st.session_state.real_report_values = None
+
+            st.session_state.verified_real_data = None
 
             st.success(
                 "Corrected text saved."
@@ -621,12 +587,8 @@ with tab2:
 
         if detected:
 
-            parameter_text = ", ".join(
-                detected
-            )
-
             st.success(
-                parameter_text
+                ", ".join(detected)
             )
 
         else:
@@ -731,10 +693,6 @@ with tab2:
                     num_rows="dynamic"
                 )
 
-                # ------------------------------------------------
-                # Save verified values
-                # ------------------------------------------------
-
                 if st.button(
                     "✅ Confirm Medical Values",
                     type="primary",
@@ -772,9 +730,9 @@ with tab2:
                         "Medical values verified successfully."
                     )
 
-            # ----------------------------------------------------
-            # Confirmed values
-            # ----------------------------------------------------
+            # ------------------------------------------------
+            # CONFIRMED VALUES
+            # ------------------------------------------------
 
             if st.session_state.verified_real_data:
 
@@ -785,9 +743,7 @@ with tab2:
                 confirmed_rows = []
 
                 for parameter, data in (
-                    st.session_state
-                    .verified_real_data
-                    .items()
+                    st.session_state.verified_real_data.items()
                 ):
 
                     confirmed_rows.append(
@@ -808,9 +764,9 @@ with tab2:
 
                 st.success(
                     """
-                    The extracted values have been
-                    verified. You can now generate
-                    the AI report from the GenAI tab.
+                    The extracted values have been verified.
+                    You can now generate the AI report or use
+                    the Disease Prediction tab.
                     """
                 )
 
@@ -842,10 +798,6 @@ with tab3:
             "📄 Real Medical Report"
         )
 
-        st.success(
-            "Verified medical values are ready."
-        )
-
         verified_data = (
             st.session_state.verified_real_data
         )
@@ -858,7 +810,6 @@ with tab3:
                         "Value": data["value"],
                         "Unit": data["unit"]
                     }
-
                     for parameter, data
                     in verified_data.items()
                 ]
@@ -988,7 +939,6 @@ with tab3:
                         "Parameter": key,
                         "Value": value
                     }
-
                     for key, value
                     in selected_patient.items()
                 ]
@@ -1046,8 +996,8 @@ with tab3:
 
         st.info(
             """
-            First generate a synthetic patient or
-            upload and verify a real medical report.
+            First generate a synthetic patient or upload
+            and verify a real medical report.
             """
         )
 
@@ -1163,11 +1113,6 @@ with tab4:
                             traceback.format_exc()
                         )
 
-
-        # ----------------------------------------------------
-        # Download
-        # ----------------------------------------------------
-
         if st.session_state.pdf_file:
 
             st.download_button(
@@ -1184,10 +1129,560 @@ with tab4:
 
 # ============================================================
 # TAB 5
-# ABOUT
+# DISEASE PREDICTION
 # ============================================================
 
 with tab5:
+
+    st.markdown(
+        '<div class="section-title">'
+        '🩺 Disease Risk Prediction'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.warning(
+        """
+        ⚠️ This feature provides model probability estimates
+        for educational/research purposes only. It is NOT a
+        medical diagnosis and should not be used for treatment
+        decisions.
+        """
+    )
+
+    prediction_source = st.radio(
+        "Prediction Input",
+        [
+            "Manual Values",
+            "Verified Real Report",
+            "Synthetic Patient"
+        ],
+        horizontal=True
+    )
+
+    disease = st.selectbox(
+        "Select Disease",
+        [
+            "Diabetes",
+            "Heart Disease"
+        ]
+    )
+
+    # ========================================================
+    # MANUAL VALUES
+    # ========================================================
+
+    if prediction_source == "Manual Values":
+
+        st.subheader(
+            "🧪 Enter Medical Parameters"
+        )
+
+        if disease == "Diabetes":
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+
+                glucose = st.number_input(
+                    "Glucose",
+                    min_value=0.0,
+                    max_value=500.0,
+                    value=120.0,
+                    step=1.0
+                )
+
+            with col2:
+
+                insulin = st.number_input(
+                    "Insulin",
+                    min_value=0.0,
+                    max_value=1000.0,
+                    value=100.0,
+                    step=1.0
+                )
+
+            with col3:
+
+                age = st.number_input(
+                    "Age",
+                    min_value=1.0,
+                    max_value=120.0,
+                    value=40.0,
+                    step=1.0
+                )
+
+            prediction_input = {
+                "Glucose": glucose,
+                "Insulin": insulin,
+                "Age": age
+            }
+
+        else:
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                age = st.number_input(
+                    "Age",
+                    min_value=1.0,
+                    max_value=120.0,
+                    value=50.0,
+                    step=1.0
+                )
+
+                trestbps = st.number_input(
+                    "Resting Blood Pressure",
+                    min_value=50.0,
+                    max_value=250.0,
+                    value=130.0,
+                    step=1.0
+                )
+
+                chol = st.number_input(
+                    "Cholesterol",
+                    min_value=50.0,
+                    max_value=700.0,
+                    value=220.0,
+                    step=1.0
+                )
+
+            with col2:
+
+                thalach = st.number_input(
+                    "Maximum Heart Rate",
+                    min_value=50.0,
+                    max_value=250.0,
+                    value=150.0,
+                    step=1.0
+                )
+
+                oldpeak = st.number_input(
+                    "Oldpeak",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=1.0,
+                    step=0.1
+                )
+
+            prediction_input = {
+                "age": age,
+                "trestbps": trestbps,
+                "chol": chol,
+                "thalach": thalach,
+                "oldpeak": oldpeak
+            }
+
+
+    # ========================================================
+    # VERIFIED REAL REPORT
+    # ========================================================
+
+    elif prediction_source == "Verified Real Report":
+
+        st.subheader(
+            "📄 Verified Medical Report Values"
+        )
+
+        if not st.session_state.verified_real_data:
+
+            st.info(
+                """
+                Upload a real medical report in the
+                Real Medical Report tab, extract the
+                values, and confirm them first.
+                """
+            )
+
+            prediction_input = None
+
+        else:
+
+            verified = (
+                st.session_state.verified_real_data
+            )
+
+            rows = []
+
+            for parameter, data in verified.items():
+
+                rows.append(
+                    {
+                        "Parameter": parameter,
+                        "Value": data["value"],
+                        "Unit": data["unit"]
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            prediction_input = {}
+
+            for parameter, data in verified.items():
+
+                prediction_input[
+                    parameter
+                ] = data["value"]
+
+            if disease == "Diabetes":
+
+                # Common aliases from medical reports
+                aliases = {
+                    "Glucose": [
+                        "Glucose",
+                        "Fasting Glucose",
+                        "Fasting_Glucose",
+                        "Blood Glucose",
+                        "Fasting Blood Glucose"
+                    ],
+                    "Insulin": [
+                        "Insulin"
+                    ],
+                    "Age": [
+                        "Age",
+                        "Patient Age"
+                    ]
+                }
+
+                normalized_input = {}
+
+                for standard_name, possible_names in aliases.items():
+
+                    for name in possible_names:
+
+                        if name in prediction_input:
+
+                            normalized_input[
+                                standard_name
+                            ] = prediction_input[name]
+
+                            break
+
+                prediction_input = normalized_input
+
+            else:
+
+                aliases = {
+                    "age": [
+                        "age",
+                        "Age",
+                        "Patient Age"
+                    ],
+                    "trestbps": [
+                        "trestbps",
+                        "Resting Blood Pressure",
+                        "Blood Pressure",
+                        "Systolic Blood Pressure"
+                    ],
+                    "chol": [
+                        "chol",
+                        "Cholesterol",
+                        "Total Cholesterol"
+                    ],
+                    "thalach": [
+                        "thalach",
+                        "Maximum Heart Rate",
+                        "Max Heart Rate"
+                    ],
+                    "oldpeak": [
+                        "oldpeak",
+                        "Oldpeak"
+                    ]
+                }
+
+                normalized_input = {}
+
+                for standard_name, possible_names in aliases.items():
+
+                    for name in possible_names:
+
+                        if name in prediction_input:
+
+                            normalized_input[
+                                standard_name
+                            ] = prediction_input[name]
+
+                            break
+
+                prediction_input = normalized_input
+
+
+    # ========================================================
+    # SYNTHETIC PATIENT
+    # ========================================================
+
+    else:
+
+        st.subheader(
+            "👤 Synthetic Patient"
+        )
+
+        if st.session_state.patients is None:
+
+            st.info(
+                """
+                Generate synthetic patients first from
+                the Synthetic Patients tab.
+                """
+            )
+
+            prediction_input = None
+
+        else:
+
+            patients_df = (
+                st.session_state.patients
+            )
+
+            patient_index = st.selectbox(
+                "Select Patient for Prediction",
+                options=list(
+                    range(
+                        len(patients_df)
+                    )
+                ),
+                format_func=lambda x:
+                    f"Patient {x + 1}",
+                key="prediction_patient_index"
+            )
+
+            selected = (
+                patients_df.iloc[
+                    patient_index
+                ].to_dict()
+            )
+
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Parameter": key,
+                            "Value": value
+                        }
+                        for key, value
+                        in selected.items()
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            prediction_input = selected.copy()
+
+            if disease == "Diabetes":
+
+                # Map synthetic diabetes fields
+                if "Fasting_Glucose" in prediction_input:
+
+                    prediction_input["Glucose"] = (
+                        prediction_input[
+                            "Fasting_Glucose"
+                        ]
+                    )
+
+                elif "Postprandial_Glucose" in prediction_input:
+
+                    prediction_input["Glucose"] = (
+                        prediction_input[
+                            "Postprandial_Glucose"
+                        ]
+                    )
+
+            # Age and Insulin already use compatible names.
+
+
+    # ========================================================
+    # RUN PREDICTION
+    # ========================================================
+
+    if prediction_input is not None:
+
+        st.divider()
+
+        if st.button(
+            "🔍 Predict Disease Risk",
+            type="primary",
+            use_container_width=True
+        ):
+
+            with st.spinner(
+                "Running machine learning model..."
+            ):
+
+                try:
+
+                    if disease == "Diabetes":
+
+                        result = predict_diabetes(
+                            prediction_input
+                        )
+
+                    else:
+
+                        result = predict_heart_disease(
+                            prediction_input
+                        )
+
+                    st.session_state.prediction_result = (
+                        result
+                    )
+
+                    st.session_state.prediction_text = (
+                        prediction_to_text(
+                            result
+                        )
+                    )
+
+                except Exception as e:
+
+                    st.session_state.prediction_result = None
+
+                    st.error(
+                        f"Prediction failed: {e}"
+                    )
+
+                    with st.expander(
+                        "Technical Details"
+                    ):
+
+                        st.code(
+                            traceback.format_exc()
+                        )
+
+
+    # ========================================================
+    # DISPLAY RESULT
+    # ========================================================
+
+    result = st.session_state.prediction_result
+
+    if result:
+
+        st.divider()
+
+        st.subheader(
+            "📊 Prediction Result"
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Disease",
+                result["disease"]
+            )
+
+        with col2:
+
+            st.metric(
+                "Model Probability",
+                f"{result['probability_percent']:.2f}%"
+            )
+
+        with col3:
+
+            st.metric(
+                "Model",
+                result["model"]
+            )
+
+        if result["prediction"] == 1:
+
+            st.error(
+                f"⚠️ {result['prediction_label']}"
+            )
+
+        else:
+
+            st.success(
+                f"✅ {result['prediction_label']}"
+            )
+
+        st.info(
+            f"Probability category: **{result['category']}**"
+        )
+
+        st.progress(
+            min(
+                max(
+                    result["probability"],
+                    0.0
+                ),
+                1.0
+            )
+        )
+
+        st.subheader(
+            "🔬 Parameters Used"
+        )
+
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Parameter": key,
+                        "Value": value
+                    }
+                    for key, value
+                    in result["features"].items()
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            "The model was trained using "
+            f"{result['training_rows']} rows from the "
+            "project dataset. This small dataset is "
+            "not sufficient for clinical validation."
+        )
+
+        # ----------------------------------------------------
+        # Add prediction to report
+        # ----------------------------------------------------
+
+        if st.button(
+            "➕ Add Prediction to AI/PDF Report",
+            use_container_width=True
+        ):
+
+            prediction_block = (
+                "\n\n---\n\n"
+                "## 🩺 Machine Learning Risk Prediction\n\n"
+                + prediction_to_text(result)
+            )
+
+            if st.session_state.generated_report:
+
+                st.session_state.generated_report += (
+                    prediction_block
+                )
+
+            else:
+
+                st.session_state.generated_report = (
+                    prediction_block
+                )
+
+            st.success(
+                "Prediction added to the report. "
+                "Open the GenAI or PDF Report tab."
+            )
+
+
+# ============================================================
+# TAB 6
+# ABOUT
+# ============================================================
+
+with tab6:
 
     st.markdown(
         '<div class="section-title">'
@@ -1201,11 +1696,24 @@ with tab5:
         ## Generative AI for Healthcare
 
         ### Synthetic & Real Medical Report Generation
+        ### + Disease Risk Prediction
 
-        This project demonstrates a Generative AI
-        pipeline for processing medical laboratory
-        information and generating structured
-        educational reports.
+        This project demonstrates a healthcare AI
+        prototype that combines:
+
+        • Synthetic patient generation
+
+        • Real medical report processing
+
+        • Medical parameter extraction
+
+        • Generative AI report generation
+
+        • Machine learning disease-risk prediction
+
+        • Model probability estimation
+
+        • PDF report generation
         """
     )
 
@@ -1229,37 +1737,48 @@ with tab5:
         "Upload PDF, JPG, JPEG, or PNG laboratory reports."
     )
 
+    st.write(
+        "🩺 **Disease Prediction**"
+    )
+
+    st.write(
+        "Estimate model probability for diabetes or "
+        "heart-disease risk using selected laboratory "
+        "and clinical parameters."
+    )
+
     st.subheader(
         "System Architecture"
     )
 
     st.code(
         """
-             INPUT
-               │
-       ┌───────┴────────┐
-       │                │
-  Synthetic          Real Report
-       │                │
-       │           PDF / Image
-       │                │
-       │         Text Extraction
-       │                │
-       │              OCR
-       │                │
-       └───────┬────────┘
-               │
-       Medical Parameters
-               │
-        Value Extraction
-               │
-       User Verification
-               │
-          Groq GenAI
-               │
-       AI Medical Report
-               │
-          PDF Output
+                  INPUT
+                    │
+          ┌─────────┴──────────┐
+          │                    │
+     Synthetic             Real Report
+      Patient              PDF / Image
+          │                    │
+          │              Text Extraction
+          │                    │
+          │             Medical Parameters
+          │                    │
+          └─────────┬──────────┘
+                    │
+             Verified Values
+                    │
+          ┌─────────┴──────────┐
+          │                    │
+      ML Models             Groq GenAI
+          │                    │
+   Disease Probability    AI Explanation
+          │                    │
+          └─────────┬──────────┘
+                    │
+             Combined Report
+                    │
+                 PDF Output
         """,
         language="text"
     )
@@ -1270,14 +1789,16 @@ with tab5:
 
     st.warning(
         """
-        The system is not a medical diagnostic tool.
+        This system is an educational/research prototype.
 
-        AI-generated interpretations should not be
-        considered professional medical advice.
+        Disease predictions are model probability estimates
+        and are NOT medical diagnoses.
 
-        Real patient information should be handled
-        according to applicable privacy and security
-        requirements.
+        The current demonstration datasets are very small
+        and are not clinically validated.
+
+        Real patient information should be handled according
+        to applicable privacy and security requirements.
         """
     )
 
@@ -1291,5 +1812,6 @@ st.divider()
 st.caption(
     "Generative AI for Healthcare | "
     "Synthetic & Real Medical Report Generation | "
+    "Disease Risk Prediction | "
     "Educational / Research Use Only"
 )
