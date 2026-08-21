@@ -17,6 +17,26 @@ from modules.medical_templates import (
 load_dotenv()
 
 DEFAULT_MODEL = "openai/gpt-oss-120b"
+def get_groq_api_key():
+    # Streamlit Cloud Secrets
+    try:
+        if "GROQ_API_KEY" in st.secrets:
+            return st.secrets["GROQ_API_KEY"]
+    except Exception:
+        pass
+
+    # Local .env
+    return os.getenv("GROQ_API_KEY")
+
+
+GROQ_API_KEY = get_groq_api_key()
+
+
+def get_groq_client():
+    if not GROQ_API_KEY:
+        return None
+
+    return Groq(api_key=GROQ_API_KEY)
 
 
 # ============================================================
